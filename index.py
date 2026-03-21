@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import pymongo
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -24,9 +25,13 @@ logger = logging.getLogger(__name__)
 # ===== CONFIG =====
 TOKEN = "7692358431:AAGvQd0H9QVcfApimKW1DFmOmupe98qEMwg"
 MAIN_ADMIN_ID = 6560139113
-DATA_FILE = "kino.txt"
-CHANNEL_FILE = "channels.txt"
-ADMINS_FILE = "admins.txt"
+MONGO_URL = os.environ.get("MONGO_URL", "mongodb+srv://user:pass@cluster.mongodb.net/test?retryWrites=true&w=majority")
+try:
+    client = pymongo.MongoClient(MONGO_URL)
+    db = client['telegram_bot']
+except Exception as e:
+    logger.error(f"MongoDB ulanishda xato: {e}")
+    db = None
 
 # Sticker ID (o'zingiznikiga almashtiring yoki o'chirib qo'ying)
 FILM_STICKER_ID = "CAACAgIAAxkBAAIBB2aZ0vZ0vZ0vZ0vZ0vZ0vZ0vZ0"
@@ -50,15 +55,12 @@ def admin_back_button():
 
 # ===== ADMINLAR =====
 def get_admins():
-    if not os.path.exists(ADMINS_FILE):
-        with open(ADMINS_FILE, 'w') as f:
-            f.write(f"{MAIN_ADMIN_ID}\n")
+    if db is None: return [MAIN_ADMIN_ID]
+    doc = db.settings.find_one({"_id": "admins"})
+    if not doc:
+        db.settings.insert_one({"_id": "admins", "list": [MAIN_ADMIN_ID]})
         return [MAIN_ADMIN_ID]
-    try:
-        with open(ADMINS_FILE, 'r') as f:
-            return [int(line.strip()) for line in f if line.strip().isdigit()]
-    except:
-        return [MAIN_ADMIN_ID]
+    return doc.get("list", [MAIN_ADMIN_ID])
 
 def check_is_admin(user_id):
     return user_id in get_admins()
@@ -68,8 +70,9 @@ def add_admin(admin_id):
         return False
     admins = get_admins()
     if admin_id not in admins:
-        with open(ADMINS_FILE, 'a') as f:
-            f.write(f"{admin_id}\n")
+        admins.append(admin_id)
+        if db is not None:
+            db.settings.update_one({"_id": "admins"}, {"$set": {"list": admins}})
         return True
     return False
 
@@ -79,80 +82,76 @@ def remove_admin(admin_id):
     admins = get_admins()
     if admin_id in admins:
         admins.remove(admin_id)
-        with open(ADMINS_FILE, 'w') as f:
-            for aid in admins:
-                f.write(f"{aid}\n")
+        if db is not None:
+            db.settings.update_one({"_id": "admins"}, {"$set": {"list": admins}})
         return True
     return False
 
 # ===== DATA =====
 def load_data():
     default = {
+        "_id": "data",
         "movies": {},
         "users": {},
         "channel_link": "https://t.me/+FQ3XcZl0VUM4NTgy",
         "requests": {}
     }
-    if not os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(default, f, ensure_ascii=False, indent=2)
-        return default
+    if db is None: return default
     try:
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            data.setdefault("users", {})
-            data.setdefault("movies", {})
-            data.setdefault("requests", {})
-            for uid, info in data["users"].items():
+        doc = db.bot_data.find_one({"_id": "data"})
+        if not doc:
+            db.bot_data.insert_one(default)
+            return default
+        
+        doc.setdefault("users", {})
+        doc.setdefault("movies", {})
+        doc.setdefault("requests", {})
+        for uid, info in doc["users"].items():
+            if isinstance(info, dict):
                 info.setdefault("code_attempts", 0)
                 info.setdefault("block_until", 0)
-            return data
+        return doc
     except Exception as e:
         logger.error(f"Data yuklash xatosi: {e}")
         return default
 
 def save_data(data):
+    if db is None: return
     try:
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        data["_id"] = "data"
+        db.bot_data.replace_one({"_id": "data"}, data, upsert=True)
     except Exception as e:
         logger.error(f"Data saqlash xatosi: {e}")
 
 # ===== KANAL =====
 def get_required_channels():
-    if not os.path.exists(CHANNEL_FILE):
-        return []
+    if db is None: return []
     try:
-        with open(CHANNEL_FILE, 'r', encoding='utf-8') as f:
-            lines = []
-            for line in f:
-                line = line.strip()
-                if line.startswith('@') or line.startswith('http') or '|' in line:
-                    lines.append(line)
-            return lines
+        doc = db.settings.find_one({"_id": "channels"})
+        if not doc:
+            return []
+        return doc.get("list", [])
     except:
         return []
 
 def add_required_channel(channel):
     if not (channel.startswith('@') or channel.startswith('http') or '|' in channel):
         return False
-    try:
-        with open(CHANNEL_FILE, 'a', encoding='utf-8') as f:
-            f.write(channel.strip() + '\n')
+    channels = get_required_channels()
+    if channel not in channels:
+        channels.append(channel.strip())
+        if db is not None:
+            db.settings.update_one({"_id": "channels"}, {"$set": {"list": channels}}, upsert=True)
         return True
-    except:
-        return False
+    return False
 
 def remove_required_channel(channel):
     channels = get_required_channels()
     if channel in channels:
         channels.remove(channel)
-        try:
-            with open(CHANNEL_FILE, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(channels) + '\n')
-            return True
-        except:
-            return False
+        if db is not None:
+            db.settings.update_one({"_id": "channels"}, {"$set": {"list": channels}}, upsert=True)
+        return True
     return False
 
 # ===== OBUNA =====
