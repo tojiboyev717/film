@@ -55,7 +55,12 @@ def admin_back_button():
 
 # ===== ADMINLAR =====
 def get_admins():
-    if db is None: return [MAIN_ADMIN_ID]
+    if db is None:
+        try:
+            with open("settings.json", "r", encoding="utf-8") as f:
+                return json.load(f).get("admins", [MAIN_ADMIN_ID])
+        except Exception:
+            return [MAIN_ADMIN_ID]
     doc = db.settings.find_one({"_id": "admins"})
     if not doc:
         db.settings.insert_one({"_id": "admins", "list": [MAIN_ADMIN_ID]})
@@ -72,7 +77,16 @@ def add_admin(admin_id):
     if admin_id not in admins:
         admins.append(admin_id)
         if db is not None:
-            db.settings.update_one({"_id": "admins"}, {"$set": {"list": admins}})
+            db.settings.update_one({"_id": "admins"}, {"$set": {"list": admins}}, upsert=True)
+        else:
+            try:
+                with open("settings.json", "r", encoding="utf-8") as f:
+                    settings = json.load(f)
+            except Exception:
+                settings = {}
+            settings["admins"] = admins
+            with open("settings.json", "w", encoding="utf-8") as f:
+                json.dump(settings, f, ensure_ascii=False, indent=2)
         return True
     return False
 
@@ -84,6 +98,15 @@ def remove_admin(admin_id):
         admins.remove(admin_id)
         if db is not None:
             db.settings.update_one({"_id": "admins"}, {"$set": {"list": admins}})
+        else:
+            try:
+                with open("settings.json", "r", encoding="utf-8") as f:
+                    settings = json.load(f)
+            except Exception:
+                settings = {}
+            settings["admins"] = admins
+            with open("settings.json", "w", encoding="utf-8") as f:
+                json.dump(settings, f, ensure_ascii=False, indent=2)
         return True
     return False
 
@@ -96,12 +119,15 @@ def load_data():
         "channel_link": "https://t.me/+FQ3XcZl0VUM4NTgy",
         "requests": {}
     }
-    if db is None: return default
     try:
-        doc = db.bot_data.find_one({"_id": "data"})
-        if not doc:
-            db.bot_data.insert_one(default)
-            return default
+        if db is None:
+            with open("data.json", "r", encoding="utf-8") as f:
+                doc = json.load(f)
+        else:
+            doc = db.bot_data.find_one({"_id": "data"})
+            if not doc:
+                db.bot_data.insert_one(default)
+                return default
         
         doc.setdefault("users", {})
         doc.setdefault("movies", {})
@@ -116,16 +142,24 @@ def load_data():
         return default
 
 def save_data(data):
-    if db is None: return
     try:
         data["_id"] = "data"
-        db.bot_data.replace_one({"_id": "data"}, data, upsert=True)
+        if db is not None:
+            db.bot_data.replace_one({"_id": "data"}, data, upsert=True)
+        else:
+            with open("data.json", "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Data saqlash xatosi: {e}")
 
 # ===== KANAL =====
 def get_required_channels():
-    if db is None: return []
+    if db is None:
+        try:
+            with open("settings.json", "r", encoding="utf-8") as f:
+                return json.load(f).get("channels", [])
+        except:
+            return []
     try:
         doc = db.settings.find_one({"_id": "channels"})
         if not doc:
@@ -142,6 +176,15 @@ def add_required_channel(channel):
         channels.append(channel.strip())
         if db is not None:
             db.settings.update_one({"_id": "channels"}, {"$set": {"list": channels}}, upsert=True)
+        else:
+            try:
+                with open("settings.json", "r", encoding="utf-8") as f:
+                    settings = json.load(f)
+            except:
+                settings = {}
+            settings["channels"] = channels
+            with open("settings.json", "w", encoding="utf-8") as f:
+                json.dump(settings, f, ensure_ascii=False, indent=2)
         return True
     return False
 
@@ -151,6 +194,15 @@ def remove_required_channel(channel):
         channels.remove(channel)
         if db is not None:
             db.settings.update_one({"_id": "channels"}, {"$set": {"list": channels}}, upsert=True)
+        else:
+            try:
+                with open("settings.json", "r", encoding="utf-8") as f:
+                    settings = json.load(f)
+            except:
+                settings = {}
+            settings["channels"] = channels
+            with open("settings.json", "w", encoding="utf-8") as f:
+                json.dump(settings, f, ensure_ascii=False, indent=2)
         return True
     return False
 
@@ -256,6 +308,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if q.data != 'check_subscription':
         await q.answer()
+
+    if q.data == 'delete_msg':
+        try:
+            await q.message.delete()
+        except Exception:
+            pass
+        return
     data = load_data()
     user = q.from_user
     is_admin_user = check_is_admin(user.id)
@@ -321,6 +380,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [
                 InlineKeyboardButton("👤 Admin qo‘shish", callback_data='add_admin'),
                 InlineKeyboardButton("👤 Admin o‘chirish", callback_data='remove_admin')
+            ],
+            [
+                InlineKeyboardButton("📊 Statistika", callback_data='statistics')
             ],
             [InlineKeyboardButton("🔙 Bosh menyuga", callback_data='back_to_main')]
         ]
@@ -503,12 +565,33 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("👤 Admin qo‘shish", callback_data='add_admin'),
                 InlineKeyboardButton("👤 Admin o‘chirish", callback_data='remove_admin')
             ],
+            [
+                InlineKeyboardButton("📊 Statistika", callback_data='statistics')
+            ],
             [InlineKeyboardButton("🔙 Bosh menyuga", callback_data='back_to_main')]
         ]
         await q.edit_message_text(
             "<b>👑 Admin panel</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(kb)
+        )
+        return
+
+    if q.data == 'statistics' and is_admin_user:
+        users_count = len(data.get("users", {}))
+        movies_count = len(data.get("movies", {}))
+        channels_count = len(get_required_channels())
+        
+        stat_text = (
+            "<b>📊 Bot Statistikasi:</b>\n\n"
+            f"👤 Foydalanuvchilar: <b>{users_count} ta</b>\n"
+            f"🎬 Filmlar: <b>{movies_count} ta</b>\n"
+            f"📢 Kanallar: <b>{channels_count} ta</b>"
+        )
+        await q.edit_message_text(
+            stat_text,
+            parse_mode="HTML",
+            reply_markup=admin_back_button()
         )
         return
 
@@ -551,9 +634,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         caption = (
             f"🎬 <b>{m['name']}</b>\n"
-            f"🆔<b>Kod:</b> {code}\n"
-            f"⭐<b>Reyting:</b> {m.get('rating', '—')}\n"
-            f"🎭<b>Janr:</b> {m.get('genre', '—')}"
+            f"🆔<b>Kod:</b> {code}"
         )
         if "description" in m and m["description"]:
             caption += f"\n\n{m['description']}"
@@ -564,10 +645,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
         if "file_id" in m:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌", callback_data='delete_msg')]
+            ])
             await q.message.reply_video(
                 video=m["file_id"],
                 caption=caption,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=kb
             )
         else:
             await q.message.reply_text(caption + "\n\nVideoni botda topa olmadim.", parse_mode="HTML")
@@ -738,9 +823,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         m = data["movies"][code]
         caption = (
             f"🎬 <b>{m['name']}</b>\n"
-            f"🆔<b>Kod:</b> {code}\n"
-            f"⭐<b>Reyting:</b> {m.get('rating', '—')}\n"
-            f"🎭<b>Janr:</b> {m.get('genre', '—')}"
+            f"🆔<b>Kod:</b> {code}"
         )
         if "description" in m and m["description"]:
             caption += f"\n\n{m['description']}"
@@ -751,10 +834,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
         if "file_id" in m:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌", callback_data='delete_msg')]
+            ])
             await update.message.reply_video(
                 video=m["file_id"],
                 caption=caption,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=kb
             )
         else:
             await update.message.reply_text(caption + "\n\nVideoni botda topa olmadim.", parse_mode="HTML")
@@ -774,9 +861,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c, m = found[0]
         caption = (
             f"🎬 <b>{m['name']}</b>\n"
-            f"🆔<b>Kod:</b> {c}\n"
-            f"⭐<b>Reyting:</b> {m.get('rating', '—')}\n"
-            f"🎭<b>Janr:</b> {m.get('genre', '—')}"
+            f"🆔<b>Kod:</b> {c}"
         )
         if "description" in m and m["description"]:
             caption += f"\n\n{m['description']}"
@@ -787,10 +872,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
         if "file_id" in m:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌", callback_data='delete_msg')]
+            ])
             await update.message.reply_video(
                 video=m["file_id"],
                 caption=caption,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=kb
             )
         else:
             await update.message.reply_text(caption + "\n\nVideoni botda topa olmadim.", parse_mode="HTML")
