@@ -23,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ===== CONFIG =====
-TOKEN = "7692358431:AAGvQd0H9QVcfApimKW1DFmOmupe98qEMwg"
+TOKEN = "8342429220:AAHUExxMXZV9OhZav3kcbuz9YKu5avOW49E"
 MAIN_ADMIN_ID = 6560139113
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb+srv://user:pass@cluster.mongodb.net/test?retryWrites=true&w=majority")
 try:
