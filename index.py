@@ -370,10 +370,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         kb = [
             [
-                InlineKeyboardButton("➕ Yangi film qo‘shish", callback_data='add_movie'),
-                InlineKeyboardButton("🗑 Film o‘chirish", callback_data='delete_movie')
-            ],
-            [
                 InlineKeyboardButton("🔗 Kanal qo‘shish", callback_data='set_required_channel'),
                 InlineKeyboardButton("❌ Kanal o‘chirish", callback_data='remove_required_channel')
             ],
@@ -554,10 +550,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == 'admin_panel' and is_admin_user:
         kb = [
             [
-                InlineKeyboardButton("➕ Yangi film qo‘shish", callback_data='add_movie'),
-                InlineKeyboardButton("🗑 Film o‘chirish", callback_data='delete_movie')
-            ],
-            [
                 InlineKeyboardButton("🔗 Kanal qo‘shish", callback_data='set_required_channel'),
                 InlineKeyboardButton("❌ Kanal o‘chirish", callback_data='remove_required_channel')
             ],
@@ -578,15 +570,85 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if q.data == 'statistics' and is_admin_user:
-        users_count = len(data.get("users", {}))
-        movies_count = len(data.get("movies", {}))
-        channels_count = len(get_required_channels())
-        
+        users = data.get("users", {})
+        movies = data.get("movies", {})
+        channels = get_required_channels()
+
+        users_count = len(users)
+        movies_count = len(movies)
+        channels_count = len(channels)
+
+        # Bugungi yangi foydalanuvchilar
+        today = datetime.now().strftime("%Y-%m-%d")
+        new_today = sum(
+            1 for u in users.values()
+            if isinstance(u, dict) and u.get("joined", "").startswith(today)
+        )
+
+        # Blok qilingan foydalanuvchilar
+        now_ts = datetime.now().timestamp()
+        blocked_count = sum(
+            1 for u in users.values()
+            if isinstance(u, dict) and u.get("block_until", 0) > now_ts
+        )
+
+        # Eng so'ngi qo'shilgan film
+        if movies:
+            try:
+                last_movie = max(
+                    movies.items(),
+                    key=lambda x: x[1].get("added", "")
+                )
+                last_movie_text = f"<b>{last_movie[1]['name']}</b> ({last_movie[0]})"
+            except Exception:
+                last_movie_text = "—"
+        else:
+            last_movie_text = "—"
+
+        # Eng yuqori reytingli film
+        if movies:
+            try:
+                top_movie = max(
+                    movies.items(),
+                    key=lambda x: float(x[1].get("rating", "0") or 0)
+                )
+                top_rating = top_movie[1].get("rating", "—")
+                top_movie_text = f"<b>{top_movie[1]['name']}</b> ⭐️{top_rating}"
+            except Exception:
+                top_movie_text = "—"
+        else:
+            top_movie_text = "—"
+
+        # Janrlar statistikasi
+        genre_counts = {}
+        for m in movies.values():
+            g = m.get("genre", "—")
+            if g and g != "—":
+                genre_counts[g] = genre_counts.get(g, 0) + 1
+        if genre_counts:
+            top_genre = max(genre_counts, key=genre_counts.get)
+            genre_text = f"{top_genre} ({genre_counts[top_genre]} ta)"
+        else:
+            genre_text = "—"
+
+        # Required channels turi
+        normal_ch = sum(1 for c in channels if not '|' in c and not c.startswith('http'))
+        request_ch = sum(1 for c in channels if '|' in c)
+
         stat_text = (
-            "<b>📊 Bot Statistikasi:</b>\n\n"
-            f"👤 Foydalanuvchilar: <b>{users_count} ta</b>\n"
-            f"🎬 Filmlar: <b>{movies_count} ta</b>\n"
-            f"📢 Kanallar: <b>{channels_count} ta</b>"
+            "<b>📊 Bot Statistikasi</b>\n"
+            "━━━━━━━━━━━━━━━\n\n"
+            f"👥 <b>Foydalanuvchilar:</b> {users_count} ta\n"
+            f"🆕 <b>Bugun qo'shildi:</b> {new_today} ta\n"
+            f"⛔️ <b>Blok qilingan:</b> {blocked_count} ta\n\n"
+            f"🎬 <b>Jami filmlar:</b> {movies_count} ta\n"
+            f"🕐 <b>Oxirgi film:</b> {last_movie_text}\n"
+            f"🏆 <b>Top film:</b> {top_movie_text}\n"
+            f"🎭 <b>Eng ko'p janr:</b> {genre_text}\n\n"
+            f"📢 <b>Kanallar:</b> {channels_count} ta\n"
+            f"   • Oddiy: {normal_ch} ta\n"
+            f"   • Request: {request_ch} ta\n\n"
+            f"🗓 <b>Sana:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         )
         await q.edit_message_text(
             stat_text,
@@ -595,30 +657,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if q.data == 'add_movie' and is_admin_user:
-        context.user_data["adding_movie"] = True
-        await q.edit_message_text(
-            "<b>🎥 Videoni forward qiling!</b>\n\n"
-            "Captionda quyidagilar bo‘lishi kerak:\n"
-            "Kod: ABC123\n"
-            "Nom: ...\n"
-            "Reyting: ...\n"
-            "Janr: ...\n"
-            "Tavsif: ...",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Orqaga", callback_data='back_to_admin_panel')]])
-        )
-        return
-
-    if q.data == 'delete_movie' and is_admin_user:
-        context.user_data["deleting_movie"] = True
-        await q.edit_message_text(
-            "<b>🗑 O'chiriladigan filmning kodini yozing</b>\n\n"
-            "Masalan: ABC123",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Orqaga", callback_data='back_to_admin_panel')]])
-        )
-        return
 
     if q.data == 'cancel_add':
         context.user_data.clear()
@@ -946,6 +984,70 @@ async def handle_forwarded_video(update: Update, context: ContextTypes.DEFAULT_T
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
+# ===== KANAL VIDEO HANDLER =====
+async def handle_channel_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Kanalda video post qilinganda caption'da 'Nom:' tegi bo'lsa,
+    bot avtomatik raqamli kod yaratib, filmni saqlaydi.
+    Agar 'Kod:' ham bo'lsa, o'sha kod ishlatiladi.
+    """
+    msg = update.channel_post
+    if not msg or not msg.video:
+        return
+
+    caption = msg.caption or ""
+    info = {}
+    for line in caption.splitlines():
+        line = line.strip()
+        if ':' in line:
+            k, v = [x.strip() for x in line.split(":", 1)]
+            info[k] = v
+
+    # Faqat "Nom:" tegi bo'lsa ishlaydi
+    if "Nom" not in info:
+        return
+
+    data = load_data()
+
+    # Kod: yozilgan bo'lsa o'shani ishlat, aks holda avtomatik raqam
+    if "Kod" in info and info["Kod"].strip():
+        code = info["Kod"].strip().upper()
+    else:
+        existing_codes = [k for k in data.get("movies", {}).keys() if k.isdigit()]
+        next_num = (max(int(c) for c in existing_codes) + 1) if existing_codes else 1
+        code = str(next_num)
+
+    # Agar kod allaqachon mavjud bo'lsa, yangi raqam tayinla
+    if code in data.get("movies", {}):
+        existing_codes = [k for k in data.get("movies", {}).keys() if k.isdigit()]
+        next_num = (max(int(c) for c in existing_codes) + 1) if existing_codes else 1
+        code = str(next_num)
+
+    data["movies"][code] = {
+        "name": info["Nom"],
+        "rating": info.get("Reyting", "—"),
+        "genre": info.get("Janr", "—"),
+        "description": info.get("Tavsif", ""),
+        "file_id": msg.video.file_id,
+        "added": datetime.now().strftime("%Y-%m-%d %H:%M")
+    }
+    save_data(data)
+
+    try:
+        await context.bot.send_message(
+            chat_id=MAIN_ADMIN_ID,
+            text=(
+                f"✅ <b>Yangi film avtomatik qo'shildi!</b>\n\n"
+                f"🎬 Nom: <b>{info['Nom']}</b>\n"
+                f"🆔 Kod: <b>{code}</b>\n"
+                f"⭐️ Reyting: {info.get('Reyting', '—')}\n"
+                f"🎭 Janr: {info.get('Janr', '—')}"
+            ),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Admin xabar yuborishda xato: {e}")
+
 # ===== JOIN REQUEST HANDLER =====
 async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -982,9 +1084,8 @@ def main():
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(ChatJoinRequestHandler(handle_join_request))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(
-        MessageHandler(filters.VIDEO & filters.User(user_id=MAIN_ADMIN_ID), handle_forwarded_video)
-    )
+    # Kanal video handler - kanaldan video kelganda avtomatik saqlaydi
+    app.add_handler(MessageHandler(filters.VIDEO & filters.UpdateType.CHANNEL_POSTS, handle_channel_video))
 
     print("Bot ishga tushdi...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
