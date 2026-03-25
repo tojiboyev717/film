@@ -605,31 +605,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             last_movie_text = "—"
 
-        # Eng yuqori reytingli film
-        if movies:
-            try:
-                top_movie = max(
-                    movies.items(),
-                    key=lambda x: float(x[1].get("rating", "0") or 0)
-                )
-                top_rating = top_movie[1].get("rating", "—")
-                top_movie_text = f"<b>{top_movie[1]['name']}</b> ⭐️{top_rating}"
-            except Exception:
-                top_movie_text = "—"
-        else:
-            top_movie_text = "—"
-
-        # Janrlar statistikasi
-        genre_counts = {}
-        for m in movies.values():
-            g = m.get("genre", "—")
-            if g and g != "—":
-                genre_counts[g] = genre_counts.get(g, 0) + 1
-        if genre_counts:
-            top_genre = max(genre_counts, key=genre_counts.get)
-            genre_text = f"{top_genre} ({genre_counts[top_genre]} ta)"
-        else:
-            genre_text = "—"
 
         # Required channels turi
         normal_ch = sum(1 for c in channels if not '|' in c and not c.startswith('http'))
@@ -643,19 +618,108 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⛔️ <b>Blok qilingan:</b> {blocked_count} ta\n\n"
             f"🎬 <b>Jami filmlar:</b> {movies_count} ta\n"
             f"🕐 <b>Oxirgi film:</b> {last_movie_text}\n"
-            f"🏆 <b>Top film:</b> {top_movie_text}\n"
-            f"🎭 <b>Eng ko'p janr:</b> {genre_text}\n\n"
             f"📢 <b>Kanallar:</b> {channels_count} ta\n"
             f"   • Oddiy: {normal_ch} ta\n"
             f"   • Request: {request_ch} ta\n\n"
             f"🗓 <b>Sana:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         )
+        stat_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗑 Kino o'chirish", callback_data='delete_movie')],
+            [InlineKeyboardButton("🔙 Orqaga", callback_data='back_to_admin_panel')]
+        ])
         await q.edit_message_text(
             stat_text,
+            parse_mode="HTML",
+            reply_markup=stat_kb
+        )
+        return
+
+    if q.data == 'delete_movie' and is_admin_user:
+        return await show_delete_movie_list(update, context, data, is_admin_user, page=0)
+
+    if q.data.startswith('del_page_') and is_admin_user:
+        page = int(q.data.replace('del_page_', ''))
+        return await show_delete_movie_list(update, context, data, is_admin_user, page=page)
+
+    if q.data.startswith('confirm_del_') and is_admin_user:
+        # Kodda tag chiziq bo'lishi mumkinligini hisobga olib, oxirgi qismini emas, 
+        # 'confirm_del_' dan keyingi hamma qismini olamiz
+        code = q.data[12:] 
+        movie_info = data.get("movies", {}).get(code)
+        
+        if movie_info:
+            name = movie_info.get("name", "—")
+            del data["movies"][code]
+            save_data(data)
+            
+            await q.answer(f"✅ {name} o'chirildi!", show_alert=True)
+            
+            # Joriy sahifani aniqlash (oddiyroq bo'lishi uchun 0-sahifaga qaytarish 
+            # yoki joriy holatni saqlash mumkin, hozircha 0)
+            return await show_delete_movie_list(update, context, data, is_admin_user, page=0)
+        else:
+            await q.answer("❌ Bu kino topilmadi", show_alert=True)
+        return
+
+async def show_delete_movie_list(update, context, data, is_admin_user, page=0):
+    q = update.callback_query
+    movies = data.get("movies", {})
+    if not movies:
+        await q.edit_message_text(
+            "<b>❌ Hozircha kinolar yo'q.</b>",
             parse_mode="HTML",
             reply_markup=admin_back_button()
         )
         return
+
+    # Kinolarni kodlari bo'yicha tartiblash (raqam bo'lsa raqamdek, bo'lmasa matndek)
+    all_movies = sorted(
+        movies.items(),
+        key=lambda x: (int(x[0]) if x[0].isdigit() else 999999, x[0])
+    )
+
+    per_page = 10
+    total_pages = (len(all_movies) + per_page - 1) // per_page
+    
+    if page >= total_pages: page = total_pages - 1
+    if page < 0: page = 0
+
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    current_page_movies = all_movies[start_idx:end_idx]
+
+    kb = []
+    # Faqat kino kodi va nomi (tartib raqamisiz)
+    for code, m in current_page_movies:
+        kb.append([InlineKeyboardButton(f"🗑 {code} - {m['name'][:25]}", callback_data=f"confirm_del_{code}")])
+
+    # Pagination tugmalari
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("◀️ Oldingi", callback_data=f"del_page_{page-1}"))
+    
+    nav_buttons.append(InlineKeyboardButton(f"📄 {page+1}/{total_pages}", callback_data="none"))
+    
+    if (page + 1) < total_pages:
+        nav_buttons.append(InlineKeyboardButton("Keyingi ▶️", callback_data=f"del_page_{page+1}"))
+    
+    if nav_buttons:
+        kb.append(nav_buttons)
+
+    kb.append([InlineKeyboardButton("🔙 Orqaga", callback_data='statistics')])
+
+    text = (
+        "<b>🗑 O'chirish uchun kinoni tanlang:</b>\n\n"
+        f"Jami filmlar: {len(all_movies)} ta"
+    )
+
+    await q.edit_message_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+
 
 
     if q.data == 'cancel_add':
@@ -769,6 +833,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
+    # Deleting movie mode is now handled exclusively via buttons in show_delete_movie_list
     if context.user_data.get("deleting_movie") and is_admin_user:
         if text.lower() in ["/cancel", "bekor", "orqaga"]:
             context.user_data.clear()
@@ -780,14 +845,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             name = data["movies"][code].get("name", "—")
             del data["movies"][code]
             save_data(data)
-            kb = [[InlineKeyboardButton("🔙 Orqaga", callback_data='back_to_admin_panel')]]
+            kb = [
+                [InlineKeyboardButton("🗑 Yana o'chirish", callback_data='delete_movie')],
+                [InlineKeyboardButton("🔙 Admin panel", callback_data='back_to_admin_panel')]
+            ]
             await update.message.reply_text(
-                f"<b>✅ Muvaffaqiyatli o‘chirildi!</b>\nKod: {code}\nNomi: {name}",
+                f"<b>✅ Muvaffaqiyatli o'chirildi!</b>\n🆔 Kod: <code>{code}</code>\n🎬 Nomi: {name}",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(kb)
             )
         else:
-            await update.message.reply_text(f"<b>{code}</b> topilmadi", parse_mode="HTML")
+            await update.message.reply_text(
+                f"❌ <b>{code}</b> kodi topilmadi!\nQayta kiring yoki /cancel bilan bekor qiling.",
+                parse_mode="HTML"
+            )
+            return
         context.user_data.clear()
         return
 
@@ -837,10 +909,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Kod yozilganda limitni oshirish
+        # Kod yozilganda limitni oshirish (Aniq kod yoki nomdagi qanaqadir matn)
         is_valid_code = (
             text.upper() in data.get("movies", {}) or
-            any(text.lower() in c.lower() or text.lower() in m["name"].lower() for c, m in data.get("movies", {}).items())
+            any(text.lower() in m["name"].lower() for c, m in data.get("movies", {}).items())
         )
 
         if is_valid_code:
@@ -855,7 +927,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-    # ===== KOD / QIDIRUV LOGIKASI =====
+    # ===== KOD / QIDIRUV LOGIKASI (Faqat admin rejimda bo'lmasa) =====
+    if context.user_data:
+        # Agar biron rejimda bo'lsa va yuqoridagilarga tushmagan bo'lsa, qidiruvni cheklaymiz
+        return
+
     code = text.upper()
     if code in data.get("movies", {}):
         m = data["movies"][code]
@@ -886,10 +962,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_data(data)
         return
 
-    found = [
-        (c, m) for c, m in data.get("movies", {}).items()
-        if text.lower() in c.lower() or text.lower() in m["name"].lower()
-    ]
+    if text.isdigit():
+        # Agar faqat raqam bo'lsa, qisman qidiruv qilmaymiz (aniq kod yuqorida tekshirildi)
+        found = []
+    else:
+        # Agar matn bo'lsa, nomlar ichidan qidiramiz
+        found = [
+            (c, m) for c, m in data.get("movies", {}).items()
+            if text.lower() in m["name"].lower()
+        ]
 
     if not found:
         await update.message.reply_text("Hech narsa topilmadi 😔")
